@@ -128,7 +128,7 @@ func NewTupleFromByteArrayWithMetadata(meta *ResultSetMetadata, bufr []byte) (*T
 				for i := 0; i < offEnd-offStart; i++ {
 					tsv.Value[i] = tup.binTupleValue[tup.valueBase+offStart+i]
 				}
-				if tsv.Value[0] == 0x80 {
+				if len(tsv.Value) > 0 && tsv.Value[0] == 0x80 {
 					// 0x80 is doubled if value starts with 0x80
 					if len(tsv.Value) > 1 {
 						tsv.Value = tsv.Value[1:]
@@ -271,6 +271,14 @@ func (t *Tuple) GetValue(index int, valType int) (interface{}, error) {
 	if index < 0 || index > len(t.values) {
 		return nil, fmt.Errorf("Index is invalid")
 	}
+	// A zero-length payload always means NULL: variable-length elements never have an empty
+	// payload (an empty STRING or BYTE_ARRAY is encoded with a leading 0x80 byte) and every
+	// fixed-width element has a non-zero width. Without this check NULL was decoded as 0 or ""
+	// (and reading a NULL boolean or decimal used to panic).
+	if valType != typeNULL && len(t.values[index].Value) == 0 {
+		return nil, nil
+	}
+
 	switch valType {
 		case typeNULL:
 			return nil, nil

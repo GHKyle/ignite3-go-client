@@ -215,6 +215,20 @@ type Client interface {
 	// ResourceClose closes a resource, such as query cursor.
 	// https://apacheignite.readme.io/docs/binary-client-protocol-sql-operations#section-op_resource_close
 	ResourceClose(id int64) error
+
+	// GetTableSchema loads the latest schema (columns, types and key columns) of a table.
+	GetTableSchema(tableId int) (*TableSchema, error)
+
+	// GetTableByName resolves a table by its qualified name ("SCHEMA"."TABLE", quoting and case
+	// insensitive) and loads its schema.
+	GetTableByName(qualifiedName string) (*Table, error)
+
+	// TableUpsertAll inserts or overwrites binary tuple rows by key. Unlike SQL MERGE this is a
+	// plain key-based write: no parsing, no planning, no plan cache entries and no table scan.
+	TableUpsertAll(tableId int, schemaVersion int, rows [][]byte) error
+
+	// TableDeleteAll deletes binary tuple rows by key.
+	TableDeleteAll(tableId int, schemaVersion int, keys [][]byte) error
 }
 
 type client struct {
@@ -222,7 +236,7 @@ type client struct {
 	conn      net.Conn
 	mutex     *sync.Mutex
 	quit      chan struct{}
-	RequestId int64          // A request ID, incremented after each request (heartbeat, operation, ...) FIXME: Increment it!
+	RequestId int64 // A request ID, incremented after each request (heartbeat, operation, ...) FIXME: Increment it!
 
 	Client
 }
@@ -316,12 +330,10 @@ func Connect(ci ConnInfo) (Client, error) {
 			}
 		}
 	}()*/
-	
 
 	// return connected client
 	return c, nil
 }
-
 
 func (c *client) SendHeartbeat() error {
 	req := NewRequestHeartbeat(c.RequestId)
