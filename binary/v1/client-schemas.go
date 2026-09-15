@@ -204,43 +204,105 @@ func (c *client) GetTableSchema(tableId int) (*TableSchema, error) {
 }
 
 // GetTableByName resolves a table by its qualified name ("SCHEMA"."TABLE" or "SCHEMA.TABLE",
-// quoting optional, case insensitive) and loads its schema. The cluster may report either the
-// qualified name or the bare table name, so an exact match is preferred and a suffix match is
-// used as a fallback.
+// quoting optional) and loads its schema.
+//
+// The name is resolved with OP_TABLE_GET, which asks the server to parse the qualified name:
+// that is the reliable way, because OP_TABLES_GET does not necessarily list every table
+// (for example, tables of non-default schemas may be missing). The table list is only used as
+// a fallback if the server does not return a table for the requested name.
 func (c *client) GetTableByName(qualifiedName string) (*Table, error) {
+	id, name, err := c.tableIdByName(qualifiedName)
+	if err != nil {
+		return nil, err
+	}
+
+	if id < 0 {
+		id, name, err = c.findTableInList(qualifiedName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	schema, err := c.GetTableSchema(id)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Table{Id: id, Name: name, Schema: schema, c: c}, nil
+}
+
+// tableIdByName resolves a table id with the TABLE_GET operation. It returns a negative id when
+// the server reports that the table does not exist.
+func (c *client) tableIdByName(qualifiedName string) (int, string, error) {
+	var buf bytes.Buffer
+	if err := WritePackedString(&buf, qualifiedName); err != nil {
+		return 0, "", errors.Wrapf(err, "failed to write table name")
+	}
+
+	req := NewRequestOperation(OpTableGet, c.RequestId, buf.Bytes())
+	res := NewResponseOperation(req.RequestId)
+
+	if err := c.Do(req, res); err != nil {
+		return 0, "", errors.Wrapf(err, "failed to execute GET_TABLE operation")
+	}
+	if err := res.CheckStatus(); err != nil {
+		return 0, "", err
+	}
+
+	// The server answers with nil when the table does not exist.
+	notFound, err := TryReadPackedNil(res.message)
+	if err != nil {
+		return 0, "", errors.Wrapf(err, "failed to read table lookup result")
+	}
+	if notFound {
+		return -1, "", nil
+	}
+
+	id, err := ReadPackedInt32(res.message)
+	if err != nil {
+		return 0, "", errors.Wrapf(err, "failed to read table id")
+	}
+
+	name, err := ReadPackedString(res.message)
+	if err != nil {
+		return 0, "", errors.Wrapf(err, "failed to read table name")
+	}
+
+	return int(id), name, nil
+}
+
+// findTableInList scans the table list for a matching name. It is only used when TABLE_GET does
+// not return the table.
+func (c *client) findTableInList(qualifiedName string) (int, string, error) {
 	wanted := normalizeTableName(qualifiedName)
 
 	tables, err := c.GetTables()
 	if err != nil {
-		return nil, err
+		return 0, "", err
 	}
 
-	var candidates []int64
+	fallback := int64(-1)
 	for id, name := range tables {
 		reported := normalizeTableName(name)
 		if reported == wanted {
-			candidates = append([]int64{id}, candidates...)
-		} else if strings.HasSuffix(wanted, "."+reported) || strings.HasSuffix(reported, "."+wanted) {
-			candidates = append(candidates, id)
+			return int(id), name, nil
+		}
+		if fallback < 0 && (strings.HasSuffix(wanted, "."+reported) || strings.HasSuffix(reported, "."+wanted)) {
+			fallback = id
 		}
 	}
 
-	if len(candidates) == 0 {
-		names := make([]string, 0, len(tables))
-		for _, name := range tables {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		return nil, errors.Errorf("table %s not found, known tables: %v", qualifiedName, names)
+	if fallback >= 0 {
+		return int(fallback), tables[fallback], nil
 	}
 
-	id := candidates[0]
-	schema, err := c.GetTableSchema(int(id))
-	if err != nil {
-		return nil, err
+	names := make([]string, 0, len(tables))
+	for _, name := range tables {
+		names = append(names, name)
 	}
+	sort.Strings(names)
 
-	return &Table{Id: int(id), Name: tables[id], Schema: schema, c: c}, nil
+	return 0, "", errors.Errorf("table %s not found, known tables: %v", qualifiedName, names)
 }
 
 // normalizeTableName lowercases a table name and strips quoting and whitespace so that
