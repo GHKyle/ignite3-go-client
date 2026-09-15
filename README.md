@@ -136,11 +136,11 @@ Columns from a live 36-column table (`VARCHAR` primary key, `DECIMAL(30,2)`,
 
 | column | value |
 | --- | --- |
-| `MT4_ACCOUNT_ID` | `3f2b1c9e-8a4d-4f1e-9c2b-77aa11bb22cc` |
-| `BK_OPENNING_AMOUNT` | `1000.50` |
-| `OI_REGISTERED_DATETIME` | `2026-04-20 16:29:40.644838` |
-| `TRADABLE` | `true` |
-| `CM_PROCESS_REMARK` | `NULL` |
+| `ID` | `3f2b1c9e-8a4d-4f1e-9c2b-77aa11bb22cc` |
+| `AMOUNT` | `1000.50` |
+| `REGISTERED_DATETIME` | `2026-04-20 16:29:40.644838` |
+| `ENABLE` | `true` |
+| `REMARK` | `NULL` |
 
 Encoded tuple (57 bytes):
 
